@@ -11,6 +11,7 @@
 #  - MakleKing
 #  - Thomas Beinicke
 #  - Jeremy Jacquier-Roux
+#  - Klaus Tachtler
 #
 ###################################################################
 # This program is free software; you can redistribute it and/or
@@ -25,16 +26,20 @@
 #
 #    For information: cyril@feraudet.com
 ####################################################################
+# Changed "Memory" data mining for squid version 3.5.20 
+# Developped by : Klaus Tachtler <klaus@tachtler.net>
+# http://dokuwiki.tachtler.net
+# http://www.tachtler.net
+####################################################################
 
-my $VERSION = "1.01";
+my $VERSION = "1.02";
 
 $|;
 use Nagios::Plugin;
 # todo : use strict;
 
-$np = Nagios::Plugin->new(
-	usage => "Usage: %s [ -v|--verbose ] [ -H <host> ] [ -d <data> ] [ -p <port> ] [ -t <timeout>] [ -c <threshold> ] [ -w <threshold> ]",
-	version => $VERSION);
+
+$np = Nagios::Plugin->new(usage => "Usage: %s [ -v|--verbose ] [ -H <host> ] [ -d <data> ] [ -p <port> ] [ -t <timeout>] [ -c <threshold> ] [ -w <threshold> ]", version => $VERSION);
 
 $np->add_arg(
 	spec => 'host|H=s',
@@ -46,8 +51,8 @@ $np->add_arg(
 $np->add_arg( # Connections Cache Resources Memory FileDescriptors
 	spec => 'data|d=s',
 	help => "-d, --data=<data>\n"
-	. "	Optional data to fetch (default: Connections)\n"
-	. "	Available data: Connections Cache Resources Memory FileDescriptors",
+	. "	Optional data to fetch (default: Connections)"
+	. "	available data : Connections Cache Resources Memory FileDescriptors",
 	required => 0
 );
 
@@ -93,20 +98,12 @@ $np->add_arg(
 $np->add_arg(
 	spec => 'squidclient|s=s',
 	help => "-s, --squidclient=<squidclient_path>\n"
-	. "	Path of squidclient (default: /usr/sbin/squidclient)",
-	required => 0,
-);
-
-$np->add_arg(
-	spec => 'verbose|v',
-	help => "-v, --verbose\n"
-	. "	For debugging purpose",
+	. "	Path of squidclient (default: /usr/bin/squidclient)",
 	required => 0,
 );
 
 $np->getopts;
 
-my $verbose = $np->opts->verbose;
 my $host = $np->opts->host;
 my $port = $np->opts->port;
 my $data = $np->opts->data;
@@ -116,6 +113,7 @@ my $critical = $np->opts->critical;
 my $warning = $np->opts->warning;
 my $squidclient = $np->opts->squidclient;
 
+
 $host = 'localhost' if (!defined($host) or $host eq '');
 $port = 3128 if (!defined($port) or $port eq '');
 $data = 'Connections' if (!defined($data) or $data eq '');
@@ -123,7 +121,7 @@ $user = 'root' if (!defined($user) or $user eq '');
 $password = '' if (!defined($password));
 $critical = undef if (defined($critical) and $critical eq '');
 $warning = undef if (defined($warning) and $warning eq '');
-$squidclient = '/usr/sbin/squidclient' if (!defined($squidclient) or $squidclient eq '');
+$squidclient = '/usr/bin/squidclient' if (!defined($squidclient) or $squidclient eq '');
 
 $np->set_thresholds(critical => $critical, warning => $warning);
 
@@ -131,13 +129,8 @@ $np->set_thresholds(critical => $critical, warning => $warning);
 
 @exec = ("-h", "\Q$host", "-p", "\Q$port", "-U", "\Q$user", "-W", "\Q$password", "mgr:info");
 
-if (! -x $squidclient) {
-	die "$squidclient not found";
-}
+@result = `$squidclient @exec`;
 
-@result = `$squidclient @exec 2>&1`;
-
-if($? > 0) { $np->nagios_exit("CRITICAL",$result[0]); }
 
 my $fd_available;
 my $fd_used;
@@ -153,7 +146,6 @@ my $cache_bytehitratio5;
 my $cache_bytehitratio60;
 for my $line (@result)
 {
-	print $line if $verbose;
 	chomp($line);
 # Connection information for squid:
 #      Number of clients accessing cache:      1203
@@ -172,12 +164,13 @@ for my $line (@result)
 #      Select loop called: 407414146 times, 1.050 ms avg
 # Cache information for squid:
 #      Request Hit Ratios:     5min: 32.8%, 60min: 33.9%
-	$line =~ /\s+Request Hit Ratios:\s+5min:\s+([0-9\.]+)%,\s+60min:\s+([0-9\.]+)%/ and $cache_requesthitratio5 = $1 and $cache_requesthitratio60 = $2;
+#	$line =~ /\s+Request Hit Ratios:\s+5min:\s+([0-9\.]+)%,\s+60min:\s+([0-9\.]+)%/ and $cache_requesthitratio5 = $1 and $cache_requesthitratio60 = $2;
+#      Hits as % of all requests:	5min: 0.0%, 60min: 0.0%
+	$line =~ /\s+Hits as % of all requests:\s+5min:\s+([0-9\.]+)%,\s+60min:\s+([0-9\.]+)%/ and $cache_requesthitratio5 = $1 and $cache_requesthitratio60 = $2;
 #      Byte Hit Ratios:        5min: 23.7%, 60min: 20.9%
-	$line =~ /\s+Byte Hit Ratios:\s+5min:\s+([0-9\.]+)%,\s+60min:\s+([0-9\.]+)%/ and $cache_bytehitratio5 = $1 and $cache_bytehitratio60 = $2;
-    $line =~ /\s+Hits as % of all requests:\s+5min:\s+([0-9\.]+)%,\s+60min:\s+([0-9\.]+)%/ and $cache_requesthitratio5 = $1 and $cache_requesthitratio60 = $2;
-#      Byte Hit Ratios:        5min: 23.7%, 60min: 20.9%
-    $line =~ /\s+Hits as % of bytes sent:\s+5min:\s+([0-9\.]+)%,\s+60min:\s+([0-9\.]+)%/ and $cache_bytehitratio5 = $1 and $cache_bytehitratio60 = $2;
+#	$line =~ /\s+Byte Hit Ratios:\s+5min:\s+([0-9\.]+)%,\s+60min:\s+([0-9\.]+)%/ and $cache_bytehitratio5 = $1 and $cache_bytehitratio60 = $2;
+#      Hits as % of bytes sent:		5min: 100.0%, 60min: 100.0%
+	$line =~ /\s+Hits as % of bytes sent:\s+5min:\s+([0-9\.]+)%,\s+60min:\s+([0-9\.]+)%/ and $cache_bytehitratio5 = $1 and $cache_bytehitratio60 = $2;
 #      Request Memory Hit Ratios:      5min: 20.3%, 60min: 24.9%
 #      Request Disk Hit Ratios:        5min: 25.0%, 60min: 23.9%
 #      Storage Swap size:      27694948 KB
@@ -204,6 +197,9 @@ for my $line (@result)
 #      Process Data Segment Size via sbrk(): 875680 KB
 #      Maximum Resident Size: 0 KB
 #      Page faults with physical i/o: 2
+# Tachtler --------------
+# Tachtler - deprecated -
+# Tachtler --------------
 # Memory usage for squid via mallinfo():
 #      Total space in arena:  875812 KB
 #      Ordinary blocks:       811063 KB  97332 blks
@@ -212,10 +208,13 @@ for my $line (@result)
 #      Free Small blocks:          0 KB
 #      Free Ordinary blocks:   64748 KB
 #      Total in use:          815059 KB 93%
-	$line =~ /\s+Total in use:\s+([0-9]+)/ and $memory_used = $1;
+#	$line =~ /\s+Total in use:\s+([0-9]+)/ and $memory_used = $1;
 #      Total free:             64748 KB 7%
 #      Total size:            879808 KB
-	$line =~ /\s+Total size:\s+([0-9]+)/ and $memory_available = $1;
+#	$line =~ /\s+Total size:\s+([0-9]+)/ and $memory_available = $1;
+# Tachtler --------------
+# Tachtler - deprecated -
+# Tachtler --------------
 # Memory accounted for:
 #      Total accounted:       750343 KB
 #      memPoolAlloc calls: 1149188126
@@ -238,20 +237,38 @@ for my $line (@result)
 #      1027079 on-disk objects
 }
 
+# Tachtler --------------
+# Tachtler - Memory -
+# Tachtler --------------
+# squidclient -h localhost -p 8080 -U root -W FPSlsker mgr:mem
+
+@exec = ("-h", "\Q$host", "-p", "\Q$port", "-U", "\Q$user", "-W", "\Q$password", "mgr:mem");
+
+@result = `$squidclient @exec`;
+
+for my $line (@result)
+{
+	chomp($line);
+	$line =~ /Total\s+.\s+([0-9]+)\s+([0-9]+)\s+([0-9]+)\s+([0-9.]+)\s+([0-9.]+)\s+([0-9]+)\s+([0-9]+)/ and $memory_available = $2 and $memory_used = $7;
+}
+# Tachtler --------------
+# Tachtler - Memory -
+# Tachtler --------------
+
 if($data =~ /Connections/i)  # Connections Cache Resources Memory FileDescriptors
 {
 	$np->add_perfdata( label => "HTTP requests", value => $connection_nbhttpreceived, uom => "c");
 	$np->add_perfdata( label => "sent ICP requests", value => $connection_nbicpsent, uom => "c");
 	$np->add_perfdata( label => "received ICP requests", value => $connection_nbicpreceived, uom => "c");
-	$np->nagios_exit('OK', "$connection_nbclient clients, $connection_nbicpqueued queued ICP requests");
+	$np->nagios_exit('OK', "Squid have $connection_nbclient clients and $connection_nbicpqueued ICP requests queued");
 }
 if($data =~ /Cache/i)
 {
-	$np->add_perfdata( label => "Requests Hit Ratio 5min", value => $cache_requesthitratio5, uom => "%");
-	$np->add_perfdata( label => "Requests Hit Ratio 60min", value => $cache_requesthitratio60, uom => "%");
-	$np->add_perfdata( label => "Byte Hit Ratio 5min", value => $cache_bytehitratio5, uom => "%");
-	$np->add_perfdata( label => "Byte Hit Ratio 60min", value => $cache_bytehitratio60, uom => "%");
-	$np->nagios_exit('OK', "Requests Hit Ratio 5min: $cache_requesthitratio5, Requests Hit Ratio 60min: $cache_requesthitratio60, Byte Hit Ratio 5min: $cache_bytehitratio5, Byte Hit Ratio 60min: $cache_bytehitratio60");
+	$np->add_perfdata( label => "Hits as % of all requests 5min", value => $cache_requesthitratio5, uom => "%");
+	$np->add_perfdata( label => "Hits as % of all requests 60min", value => $cache_requesthitratio60, uom => "%");
+	$np->add_perfdata( label => "Hits as % of bytes sent 5min", value => $cache_bytehitratio5, uom => "%");
+	$np->add_perfdata( label => "Hits as % of bytes sent 60min", value => $cache_bytehitratio60, uom => "%");
+	$np->nagios_exit('OK', "Hits as % of all requests 5min: $cache_requesthitratio5, Hits as % of all requests 60min: $cache_requesthitratio60, Hits as % of bytes sent 5min: $cache_bytehitratio5, Hits as % of bytes sent 60min: $cache_bytehitratio60");
 }
 if($data =~ /Resources/i)
 {
@@ -265,12 +282,18 @@ if($data =~ /Memory/i)
 	my $t = Nagios::Plugin::Threshold->set_thresholds(warning  => $warning, critical => $critical);
 	$np->add_perfdata( label => "Memory used", value => $memory_used, uom => "KB", threshold => $t);
 	$np->add_perfdata( label => "Memory available", value => $memory_available, uom => "KB");
-	$np->nagios_exit($np->check_threshold($memory_used), "Using $memory_used KB of memory");
+	$np->nagios_exit($np->check_threshold($memory_used), "Squid use $memory_used KB of memory");
 }
 if($data =~ /FileDescriptors/i)
 {
 	my $t = Nagios::Plugin::Threshold->set_thresholds(warning  => $warning, critical => $critical);
 	$np->add_perfdata( label => "Max FD", value => $fd_available);
 	$np->add_perfdata( label => "Cur FD", value => $fd_used, threshold => $t);
-	$np->nagios_exit($np->check_threshold($fd_used), "Using $fd_used file descriptors. (Maximum: $fd_available)");
+	$np->nagios_exit($np->check_threshold($fd_used), 'Squid work fine.');
 }
+
+# $np->nagios_exit('OK', $output);
+# $np->nagios_exit('WARNING', $output);
+# $np->nagios_exit('CRITICAL', $output);
+# $np->nagios_exit('UNKNOWN', $output);
+# $np->nagios_exit('DEPENDENT', $output);
